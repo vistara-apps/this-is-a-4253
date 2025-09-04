@@ -1,5 +1,3 @@
-import { v2 as cloudinary } from 'cloudinary';
-
 // Configure Cloudinary (this would typically be done server-side)
 const cloudinaryConfig = {
   cloud_name: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
