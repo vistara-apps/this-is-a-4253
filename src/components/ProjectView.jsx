@@ -1,57 +1,89 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from './AuthProvider';
+import { adGenerationService } from '../services/adGeneration';
 import { ArrowLeft, Wand2, Send, Instagram, Music, Loader2 } from 'lucide-react';
 import PlatformSelector from './PlatformSelector';
 import AdVariationCard from './AdVariationCard';
 import ProgressIndicator from './ProgressIndicator';
+import toast from 'react-hot-toast';
 
 const ProjectView = ({ project, onBack }) => {
   const { addAdVariations, updateAdVariation } = useApp();
+  const { user, checkUsageLimits } = useAuth();
   const [selectedPlatforms, setSelectedPlatforms] = useState(['instagram']);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [generationStep, setGenerationStep] = useState('idle');
+  const [imageAnalysis, setImageAnalysis] = useState(null);
 
   const generateAdVariations = async () => {
+    if (!user) {
+      toast.error('Please sign in to generate ad variations');
+      return;
+    }
+
+    // Check usage limits
+    const usageCheck = await checkUsageLimits('ad_generation');
+    if (!usageCheck.canPerformAction) {
+      toast.error(`You've reached your monthly limit of ${usageCheck.limit} ad generations. Please upgrade your plan.`);
+      return;
+    }
+
+    // Validate request
+    const validation = adGenerationService.validateGenerationRequest(
+      project.productName,
+      project.productImageURL,
+      selectedPlatforms
+    );
+
+    if (!validation.isValid) {
+      toast.error(validation.errors[0]);
+      return;
+    }
+
     setIsGenerating(true);
     setGenerationStep('analyzing');
 
-    // Simulate AI processing steps
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setGenerationStep('generating');
-    
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setGenerationStep('optimizing');
-    
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    // Generate mock variations
-    const variations = selectedPlatforms.flatMap(platform => [
-      {
-        id: Date.now() + Math.random(),
-        assetURL: project.productImageURL,
-        copy: platform === 'instagram' 
-          ? `Transform your style with ${project.productName} ✨ #fashion #lifestyle #upgrade`
-          : `This ${project.productName} hits different 🔥 #viral #musthave`,
-        platform,
-        status: 'generated',
-        performanceMetrics: null
-      },
-      {
-        id: Date.now() + Math.random() + 1,
-        assetURL: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400&h=400&fit=crop',
-        copy: platform === 'instagram'
-          ? `Level up your game with premium ${project.productName} 💫 Limited time offer!`
-          : `POV: You found the perfect ${project.productName} 💯`,
-        platform,
-        status: 'generated',
-        performanceMetrics: null
+    try {
+      // Analyze image first
+      if (!imageAnalysis) {
+        const analysis = await adGenerationService.analyzeProductImage(project.productImageURL);
+        setImageAnalysis(analysis);
       }
-    ]);
 
-    addAdVariations(project.id, variations);
-    setIsGenerating(false);
-    setGenerationStep('complete');
+      setGenerationStep('generating');
+      
+      // Generate real AI variations
+      const variations = await adGenerationService.generateVariations(
+        project.id,
+        user.id,
+        project.productName,
+        project.productImageURL,
+        selectedPlatforms,
+        3 // Generate 3 variations per platform
+      );
+
+      setGenerationStep('optimizing');
+      
+      // Optimize variations for each platform
+      const optimizedVariations = await Promise.all(
+        variations.map(variation => 
+          adGenerationService.optimizeForPlatform(variation, variation.platform)
+        )
+      );
+
+      addAdVariations(project.id, optimizedVariations);
+      setGenerationStep('complete');
+      
+      toast.success(`Generated ${optimizedVariations.length} ad variations!`);
+    } catch (error) {
+      console.error('Generation error:', error);
+      toast.error(error.message || 'Failed to generate ad variations. Please try again.');
+      setGenerationStep('idle');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const postVariations = async () => {
